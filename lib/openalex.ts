@@ -1,10 +1,13 @@
 export type SortMode = "date" | "relevance" | "location";
+export type ThenMode = "none" | "date" | "location";
 export type AuthorRole = "any" | "last" | "first";
 
 export interface SearchParams {
   q: string;
   n: number;
   sort: SortMode;
+  // Re-orders the N papers picked by `sort` (e.g. top N by relevance, shown newest first).
+  then: ThenMode;
   countries: string[];
   role: AuthorRole;
   preprints: boolean;
@@ -35,14 +38,22 @@ export interface Paper {
 export const MAX_N = 200;
 const MAX_PAGES = 6;
 
+/** Secondary orderings that make sense for a given primary sort. */
+export function thenOptions(sort: SortMode): ThenMode[] {
+  return sort === "relevance" ? ["date", "location"] : sort === "date" ? ["location"] : [];
+}
+
 export function parseParams(sp: URLSearchParams): SearchParams {
   const sort = sp.get("sort");
   const role = sp.get("role");
   const n = Math.round(Number(sp.get("n")) || 25);
+  const primary: SortMode = sort === "relevance" || sort === "location" ? sort : "date";
+  const then = sp.get("then");
   return {
     q: (sp.get("q") ?? "").trim().slice(0, 200),
     n: Math.min(Math.max(n, 1), MAX_N),
-    sort: sort === "relevance" || sort === "location" ? sort : "date",
+    sort: primary,
+    then: thenOptions(primary).includes(then as ThenMode) ? (then as ThenMode) : "none",
     countries: (sp.get("countries") ?? "")
       .split(",")
       .map((c) => c.trim().toUpperCase())
@@ -55,6 +66,7 @@ export function parseParams(sp: URLSearchParams): SearchParams {
 
 export function toQueryString(p: SearchParams): string {
   const sp = new URLSearchParams({ q: p.q, n: String(p.n), sort: p.sort, role: p.role });
+  if (p.then !== "none") sp.set("then", p.then);
   if (p.countries.length) sp.set("countries", p.countries.join(","));
   if (p.preprints) sp.set("preprints", "1");
   return sp.toString();
@@ -164,10 +176,13 @@ export async function searchPapers(p: SearchParams): Promise<{ papers: Paper[]; 
     if (batch.length === 0 || p.role === "any") break;
   }
   const papers = out.slice(0, p.n);
-  if (p.sort === "location") {
+  const order = p.then !== "none" ? p.then : p.sort;
+  if (order === "location") {
     papers.sort(
       (a, b) => locationKey(a).localeCompare(locationKey(b)) || b.date.localeCompare(a.date),
     );
+  } else if (order === "date") {
+    papers.sort((a, b) => b.date.localeCompare(a.date));
   }
   return { papers, total };
 }

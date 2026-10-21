@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { COUNTRIES, countryName } from "@/lib/countries";
 import { useLibrary, type Library, type Status } from "@/lib/library";
-import { parseParams, toQueryString, type Paper, type SearchParams } from "@/lib/openalex";
+import { parseParams, thenOptions, toQueryString, type Paper, type SearchParams } from "@/lib/openalex";
 
 interface Followed {
   id: string;
@@ -20,7 +20,7 @@ const load = (): Followed[] => {
   }
 };
 const describe = (p: SearchParams) =>
-  `${p.q}${p.countries.length ? ` · ${p.countries.join(", ")}` : ""}${p.role !== "any" ? ` (${p.role} author)` : ""}`;
+  `${p.q}${p.countries.length ? ` · ${p.countries.join(", ")}` : ""}${p.role !== "any" ? ` (${p.role} author)` : ""}${p.sort !== "date" ? ` · ${p.sort}` : ""}${p.then !== "none" ? ` → ${p.then}` : ""}`;
 
 export default function Search() {
   const router = useRouter();
@@ -160,12 +160,25 @@ export default function Search() {
             </label>
             <label>
               Sort by
-              <select value={form.sort} onChange={(e) => set("sort", e.target.value as SearchParams["sort"])}>
+              <select value={form.sort} onChange={(e) => setForm((f) => ({ ...f, sort: e.target.value as SearchParams["sort"], then: "none" }))}>
                 <option value="date">Date (newest)</option>
                 <option value="relevance">Relevance</option>
                 <option value="location">Location of investigators</option>
               </select>
             </label>
+            {thenOptions(form.sort).length > 0 && (
+              <label>
+                Then show by
+                <select value={form.then} onChange={(e) => set("then", e.target.value as SearchParams["then"])}>
+                  <option value="none">Same order</option>
+                  {thenOptions(form.sort).map((t) => (
+                    <option key={t} value={t}>
+                      {t === "date" ? "Date (newest)" : "Location"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               Country
               <select
