@@ -14,7 +14,7 @@ export interface Author {
   name: string;
   position: "first" | "middle" | "last";
   countries: string[];
-  institution?: string;
+  institutions: string[];
 }
 
 export interface Paper {
@@ -105,7 +105,9 @@ function normalize(w: any): Paper {
     name: a.author?.display_name ?? a.raw_author_name ?? "Unknown",
     position: a.author_position ?? "middle",
     countries: a.countries ?? [],
-    institution: a.institutions?.[0]?.display_name,
+    institutions: (a.institutions ?? []).length
+      ? a.institutions.map((i: any) => i.display_name)
+      : (a.raw_affiliation_strings ?? []).slice(0, 3),
   }));
   const doi: string | undefined = w.doi ?? undefined;
   return {

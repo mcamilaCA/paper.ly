@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { COUNTRIES, countryName } from "@/lib/countries";
+import { useLibrary, type Library, type Status } from "@/lib/library";
 import { parseParams, toQueryString, type Paper, type SearchParams } from "@/lib/openalex";
 
 interface Followed {
@@ -35,6 +36,9 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [followed, setFollowed] = useState<Followed[]>([]);
+  const { lib, setStatus } = useLibrary();
+  const [view, setView] = useState<"search" | Status>("search");
+  const [filter, setFilter] = useState<"all" | "unread" | Status>("all");
 
   useEffect(() => setFollowed(load()), []);
   useEffect(() => setForm(parseParams(new URLSearchParams(activeKey))), [activeKey]);
@@ -92,13 +96,27 @@ export default function Search() {
   return (
     <div className="layout">
       <aside>
+        <h2>Reading list</h2>
+        {(["want", "read"] as const).map((st) => (
+          <button
+            key={st}
+            className={`follow ${view === st ? "on" : ""}`}
+            onClick={() => setView(view === st ? "search" : st)}
+          >
+            {st === "want" ? "Want to read" : "Read"}
+            <span className="count">{Object.values(lib).filter((e) => e.status === st).length}</span>
+          </button>
+        ))}
         <h2>Following</h2>
         {followed.length === 0 && <p className="muted">Follow a search to track what&apos;s new.</p>}
         {followed.map((f) => (
           <button
             key={f.id}
             className={`follow ${f.id === activeKey ? "on" : ""}`}
-            onClick={() => router.push(`${pathname}?${f.query}`)}
+            onClick={() => {
+              setView("search");
+              router.push(`${pathname}?${f.query}`);
+            }}
           >
             {describe(parseParams(new URLSearchParams(f.query)))}
           </button>
@@ -106,13 +124,20 @@ export default function Search() {
       </aside>
 
       <main>
-        <h1>paper.ly</h1>
-        <p className="muted">The latest papers on a topic, filtered by where the researchers are.</p>
+        <header>
+          <h1>
+            paper<span>.ly</span>
+          </h1>
+          <p className="muted">The latest papers on a topic, filtered by where the researchers are.</p>
+        </header>
 
-        <form
+        <form className="panel"
           onSubmit={(e) => {
             e.preventDefault();
-            if (form.q.trim()) go(form);
+            if (form.q.trim()) {
+              setView("search");
+              go(form);
+            }
           }}
         >
           <input
@@ -177,27 +202,50 @@ export default function Search() {
           </div>
         </form>
 
-        {error && <p className="error">{error}</p>}
-        {loading && <p className="muted">Searching…</p>}
-
-        {activeKey && !loading && !error && (
+        {view !== "search" ? (
+          <LibraryView lib={lib} status={view} setStatus={setStatus} />
+        ) : (
           <>
-            <div className="bar">
-              <span>
-                {papers.length} of {total.toLocaleString()} matching papers
-              </span>
-              <span>
-                <button onClick={toggleFollow}>{isFollowed ? "★ Following" : "☆ Follow"}</button>{" "}
-                <a href={`/api/feed?${activeKey}`} target="_blank" rel="noreferrer">
-                  Atom feed
-                </a>
-              </span>
-            </div>
-            <ol>
-              {papers.map((p) => (
-                <PaperItem key={p.id} p={p} fresh={fresh.has(p.id)} />
-              ))}
-            </ol>
+            {error && <p className="error">{error}</p>}
+            {loading && <p className="muted">Searching…</p>}
+            {activeKey && !loading && !error && (
+              <>
+                <div className="bar">
+                  <span>
+                    {papers.length} of {total.toLocaleString()} matching papers
+                  </span>
+                  <span>
+                    <button onClick={toggleFollow}>{isFollowed ? "★ Following" : "☆ Follow"}</button>{" "}
+                    <a href={`/api/feed?${activeKey}`} target="_blank" rel="noreferrer">
+                      Atom feed
+                    </a>
+                  </span>
+                </div>
+                <div className="chips">
+                  {(["all", "unread", "want", "read"] as const).map((f) => (
+                    <button key={f} className={filter === f ? "chip on" : "chip"} onClick={() => setFilter(f)}>
+                      {{ all: "All", unread: "Unread", want: "Want to read", read: "Read" }[f]}
+                    </button>
+                  ))}
+                </div>
+                <ol>
+                  {papers
+                    .filter((p) => {
+                      const st = lib[p.id]?.status;
+                      return filter === "all" || (filter === "unread" ? !st : st === filter);
+                    })
+                    .map((p) => (
+                      <PaperItem
+                        key={p.id}
+                        p={p}
+                        fresh={fresh.has(p.id)}
+                        status={lib[p.id]?.status}
+                        setStatus={setStatus}
+                      />
+                    ))}
+                </ol>
+              </>
+            )}
           </>
         )}
       </main>
@@ -205,10 +253,48 @@ export default function Search() {
   );
 }
 
-function PaperItem({ p, fresh }: { p: Paper; fresh: boolean }) {
+function LibraryView({
+  lib,
+  status,
+  setStatus,
+}: {
+  lib: Library;
+  status: Status;
+  setStatus: (p: Paper, s: Status) => void;
+}) {
+  const items = Object.values(lib)
+    .filter((e) => e.status === status)
+    .sort((a, b) => b.at - a.at);
+  return (
+    <>
+      <div className="bar">
+        <span>{status === "want" ? "Want to read" : "Read"}</span>
+        <span>{items.length} papers</span>
+      </div>
+      {items.length === 0 && <p className="muted">Nothing here yet. Mark papers from your search results.</p>}
+      <ol>
+        {items.map((e) => (
+          <PaperItem key={e.paper.id} p={e.paper} fresh={false} status={e.status} setStatus={setStatus} />
+        ))}
+      </ol>
+    </>
+  );
+}
+
+function PaperItem({
+  p,
+  fresh,
+  status,
+  setStatus,
+}: {
+  p: Paper;
+  fresh: boolean;
+  status?: Status;
+  setStatus: (p: Paper, s: Status) => void;
+}) {
   const shown = p.authors.length > 8 ? [...p.authors.slice(0, 7), p.authors[p.authors.length - 1]] : p.authors;
   return (
-    <li>
+    <li className={status ? `paper ${status}` : "paper"}>
       <a className="title" href={p.url} target="_blank" rel="noreferrer">
         {p.title}
       </a>
@@ -220,9 +306,14 @@ function PaperItem({ p, fresh }: { p: Paper; fresh: boolean }) {
       </div>
       <div className="authors">
         {shown.map((a, i) => (
-          <span key={i} title={a.institution}>
-            {a.name}
-            {a.countries.length > 0 && <sup>{a.countries.join("/")}</sup>}
+          <span key={i}>
+            <span className="author" tabIndex={0}>
+              {a.name}
+              {a.countries.length > 0 && <sup>{a.countries.join("/")}</sup>}
+              <span className="tip" role="tooltip">
+                {a.institutions.length ? a.institutions.map((x) => <div key={x}>{x}</div>) : "No affiliation listed"}
+              </span>
+            </span>
             {a.position === "last" && " (PI)"}
             {i < shown.length - 1 && ", "}
           </span>
@@ -230,6 +321,14 @@ function PaperItem({ p, fresh }: { p: Paper; fresh: boolean }) {
         {p.authors.length > shown.length && <span className="muted"> … {p.authors.length} authors</span>}
       </div>
       <div className="muted">{p.countries.map(countryName).join(" · ")}</div>
+      <div className="actions">
+        <button className={status === "want" ? "act on" : "act"} onClick={() => setStatus(p, "want")}>
+          {status === "want" ? "✓ Want to read" : "+ Want to read"}
+        </button>
+        <button className={status === "read" ? "act on" : "act"} onClick={() => setStatus(p, "read")}>
+          {status === "read" ? "✓ Read" : "Mark as read"}
+        </button>
+      </div>
       {p.abstract && (
         <details>
           <summary>Abstract</summary>
