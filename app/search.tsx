@@ -1,0 +1,241 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { COUNTRIES, countryName } from "@/lib/countries";
+import { parseParams, toQueryString, type Paper, type SearchParams } from "@/lib/openalex";
+
+interface Followed {
+  id: string;
+  query: string;
+  seen: string[];
+}
+const STORE = "paperly:followed";
+const load = (): Followed[] => {
+  try {
+    return JSON.parse(localStorage.getItem(STORE) ?? "[]");
+  } catch {
+    return [];
+  }
+};
+const describe = (p: SearchParams) =>
+  `${p.q}${p.countries.length ? ` · ${p.countries.join(", ")}` : ""}${p.role !== "any" ? ` (${p.role} author)` : ""}`;
+
+export default function Search() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
+  const active = parseParams(new URLSearchParams(sp.toString()));
+  const activeKey = active.q ? toQueryString(active) : "";
+
+  const [form, setForm] = useState(active);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [total, setTotal] = useState(0);
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [followed, setFollowed] = useState<Followed[]>([]);
+
+  useEffect(() => setFollowed(load()), []);
+  useEffect(() => setForm(parseParams(new URLSearchParams(activeKey))), [activeKey]);
+
+  const persist = (f: Followed[]) => {
+    setFollowed(f);
+    try {
+      localStorage.setItem(STORE, JSON.stringify(f));
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!activeKey) return;
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError("");
+    fetch(`/api/papers?${activeKey}`, { signal: ctrl.signal })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error ?? "Search failed");
+        return d as { papers: Paper[]; total: number };
+      })
+      .then(({ papers, total }) => {
+        setPapers(papers);
+        setTotal(total);
+        const all = load();
+        const f = all.find((x) => x.id === activeKey);
+        if (f) {
+          const seen = new Set(f.seen);
+          setFresh(new Set(papers.filter((p) => !seen.has(p.id)).map((p) => p.id)));
+          f.seen = [...new Set([...papers.map((p) => p.id), ...f.seen])].slice(0, 1000);
+          persist(all);
+        } else setFresh(new Set());
+      })
+      .catch((e) => e.name !== "AbortError" && setError(e.message))
+      .finally(() => setLoading(false));
+    return () => ctrl.abort();
+  }, [activeKey]);
+
+  const go = useCallback(
+    (p: SearchParams) => router.push(`${pathname}?${toQueryString(p)}`),
+    [router, pathname],
+  );
+  const set = <K extends keyof SearchParams>(k: K, v: SearchParams[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  const isFollowed = followed.some((f) => f.id === activeKey);
+  const toggleFollow = () =>
+    persist(
+      isFollowed
+        ? followed.filter((f) => f.id !== activeKey)
+        : [...followed, { id: activeKey, query: activeKey, seen: papers.map((p) => p.id) }],
+    );
+
+  return (
+    <div className="layout">
+      <aside>
+        <h2>Following</h2>
+        {followed.length === 0 && <p className="muted">Follow a search to track what&apos;s new.</p>}
+        {followed.map((f) => (
+          <button
+            key={f.id}
+            className={`follow ${f.id === activeKey ? "on" : ""}`}
+            onClick={() => router.push(`${pathname}?${f.query}`)}
+          >
+            {describe(parseParams(new URLSearchParams(f.query)))}
+          </button>
+        ))}
+      </aside>
+
+      <main>
+        <h1>paper.ly</h1>
+        <p className="muted">The latest papers on a topic, filtered by where the researchers are.</p>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (form.q.trim()) go(form);
+          }}
+        >
+          <input
+            className="q"
+            placeholder="Topic, e.g. neuroscience, CRISPR, graph neural networks"
+            value={form.q}
+            onChange={(e) => set("q", e.target.value)}
+            autoFocus
+          />
+          <div className="row">
+            <label>
+              Papers
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={form.n}
+                onChange={(e) => set("n", Number(e.target.value))}
+              />
+            </label>
+            <label>
+              Sort by
+              <select value={form.sort} onChange={(e) => set("sort", e.target.value as SearchParams["sort"])}>
+                <option value="date">Date (newest)</option>
+                <option value="relevance">Relevance</option>
+                <option value="location">Location of investigators</option>
+              </select>
+            </label>
+            <label>
+              Country
+              <select
+                value={form.countries[0] ?? ""}
+                onChange={(e) => set("countries", e.target.value ? [e.target.value] : [])}
+              >
+                <option value="">Anywhere</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Investigator
+              <select
+                value={form.role}
+                disabled={!form.countries.length}
+                onChange={(e) => set("role", e.target.value as SearchParams["role"])}
+              >
+                <option value="any">Any author</option>
+                <option value="last">Last author (PI)</option>
+                <option value="first">First author</option>
+              </select>
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={form.preprints} onChange={(e) => set("preprints", e.target.checked)} />
+              Include preprints
+            </label>
+            <button className="primary" type="submit">
+              Search
+            </button>
+          </div>
+        </form>
+
+        {error && <p className="error">{error}</p>}
+        {loading && <p className="muted">Searching…</p>}
+
+        {activeKey && !loading && !error && (
+          <>
+            <div className="bar">
+              <span>
+                {papers.length} of {total.toLocaleString()} matching papers
+              </span>
+              <span>
+                <button onClick={toggleFollow}>{isFollowed ? "★ Following" : "☆ Follow"}</button>{" "}
+                <a href={`/api/feed?${activeKey}`} target="_blank" rel="noreferrer">
+                  Atom feed
+                </a>
+              </span>
+            </div>
+            <ol>
+              {papers.map((p) => (
+                <PaperItem key={p.id} p={p} fresh={fresh.has(p.id)} />
+              ))}
+            </ol>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function PaperItem({ p, fresh }: { p: Paper; fresh: boolean }) {
+  const shown = p.authors.length > 8 ? [...p.authors.slice(0, 7), p.authors[p.authors.length - 1]] : p.authors;
+  return (
+    <li>
+      <a className="title" href={p.url} target="_blank" rel="noreferrer">
+        {p.title}
+      </a>
+      {fresh && <span className="badge">NEW</span>}
+      <div className="meta">
+        {p.date} · {p.venue ?? "Unknown venue"}
+        {p.type === "preprint" && " · preprint"}
+        {p.openAccess && " · open access"} · {p.citations} citations
+      </div>
+      <div className="authors">
+        {shown.map((a, i) => (
+          <span key={i} title={a.institution}>
+            {a.name}
+            {a.countries.length > 0 && <sup>{a.countries.join("/")}</sup>}
+            {a.position === "last" && " (PI)"}
+            {i < shown.length - 1 && ", "}
+          </span>
+        ))}
+        {p.authors.length > shown.length && <span className="muted"> … {p.authors.length} authors</span>}
+      </div>
+      <div className="muted">{p.countries.map(countryName).join(" · ")}</div>
+      {p.abstract && (
+        <details>
+          <summary>Abstract</summary>
+          <p>{p.abstract}</p>
+        </details>
+      )}
+    </li>
+  );
+}
