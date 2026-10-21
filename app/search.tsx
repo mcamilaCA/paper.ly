@@ -125,9 +125,13 @@ export default function Search() {
 
       <main>
         <header>
-          <h1>
-            paper<span>.ly</span>
-          </h1>
+          <div className="brand">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="" width={56} height={56} />
+            <h1>
+              paper<span>.ly</span>
+            </h1>
+          </div>
           <p className="muted">The latest papers on a topic, filtered by where the researchers are.</p>
         </header>
 
